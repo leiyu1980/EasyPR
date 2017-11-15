@@ -1,72 +1,105 @@
-#include "../include/plate_recognize.h"
+#include "easypr/core/plate_recognize.h"
+#include "easypr/config.h"
+#include "thirdparty/textDetect/erfilter.hpp"
 
-/*! \namespace easypr
-    Namespace where all the C++ EasyPR functionality resides
-*/
-namespace easypr{
+namespace easypr {
 
-CPlateRecognize::CPlateRecognize()
-{
-	//cout << "CPlateRecognize" << endl;
-	//m_plateDetect= new CPlateDetect();
-	//m_charsRecognise = new CCharsRecognise();
+CPlateRecognize::CPlateRecognize() { 
+  m_showResult = false;
 }
 
-////! 装载SVM模型
-//void CPlateRecognize::LoadSVM(string strSVM)
-//{
-//	m_plateDetect->LoadModel(strSVM.c_str());
-//}
-//
-////! 装载ANN模型
-//void CPlateRecognize::LoadANN(string strANN)
-//{
-//	m_charsRecognise->LoadModel(strANN.c_str());
-//}
-//
-//int CPlateRecognize::plateDetect(Mat src, vector<Mat>& resultVec)
-//{
-//	int result = m_plateDetect->plateDetect(src, resultVec);
-//	return result;
-//}
-//
-//int CPlateRecognize::charsRecognise(Mat plate, string& plateLicense)
-//{
-//	int result = m_charsRecognise->charsRecognise(plate, plateLicense);
-//	return result;
-//}
 
-int CPlateRecognize::plateRecognize(Mat src, vector<string>& licenseVec)
-{
-	//车牌方块集合
-	vector<Mat> plateVec;
+// main method, plate recognize, contain two parts
+// 1. plate detect
+// 2. chars recognize
+int CPlateRecognize::plateRecognize(const Mat& src, std::vector<CPlate> &plateVecOut, int img_index) {
+  // resize to uniform sizes
+  float scale = 1.f;
+  Mat img = uniformResize(src, scale);
 
-	int resultPD = plateDetect(src, plateVec);
-	if (resultPD == 0)
-	{
-		int num = plateVec.size();
+  // 1. plate detect
+  std::vector<CPlate> plateVec;
+  int resultPD = plateDetect(img, plateVec, img_index);
+  if (resultPD == 0) {
+    size_t num = plateVec.size();
+    for (size_t j = 0; j < num; j++) {
+      CPlate& item = plateVec.at(j);
+      Mat plateMat = item.getPlateMat();
+      SHOW_IMAGE(plateMat, 0);
 
-		int resultCR = 0;
-		for (int j = 0; j < num; j++)
-		{
-			Mat plate = plateVec[j];
-			
-			//获取车牌颜色
-			string plateType = getPlateType(plate);
+      // scale the rect to src;
+      item.setPlateScale(scale);
+      RotatedRect rect = item.getPlatePos();
+      item.setPlatePos(scaleBackRRect(rect, 1.f / scale));
 
-			//获取车牌号
-			string plateIdentify = "";
-			int resultCR = charsRecognise(plate, plateIdentify);
-			if (resultCR == 0)
-			{
-				string license = plateType + ":" + plateIdentify;
-				licenseVec.push_back(license);
-			}
-		}
-	}
+      // get plate color
+      Color color = item.getPlateColor();
+      if (color == UNKNOWN) {
+        color = getPlateType(plateMat, true);
+        item.setPlateColor(color);
+      }
+      std::string plateColor = getPlateColor(color);
+      if (0) {
+        std::cout << "plateColor:" << plateColor << std::endl;
+      }
 
-	return resultPD;
+      // 2. chars recognize
+      std::string plateIdentify = "";
+      int resultCR = charsRecognise(item, plateIdentify);
+      if (resultCR == 0) {
+        std::string license = plateColor + ":" + plateIdentify;
+        item.setPlateStr(license);
+        plateVecOut.push_back(item);
+        if (0) std::cout << "resultCR:" << resultCR << std::endl;
+      }
+      else {
+        std::string license = plateColor;
+        item.setPlateStr(license);
+        plateVecOut.push_back(item);
+        if (0) std::cout << "resultCR:" << resultCR << std::endl;
+      }
+    }
+    if (getResultShow()) {
+      // param type: 0 detect, 1 recognize;
+      int showType = 1;
+      if (0 == showType)
+        showDectectResults(img, plateVec, num);
+      else
+        showDectectResults(img, plateVecOut, num);
+    }
+  }
+  return resultPD;
 }
 
-}	/*! \namespace easypr*/
+void CPlateRecognize::LoadSVM(std::string path) {
+  PlateJudge::instance()->LoadModel(path);
+}
 
+void CPlateRecognize::LoadANN(std::string path) {
+  CharsIdentify::instance()->LoadModel(path);
+}
+
+void CPlateRecognize::LoadChineseANN(std::string path) {
+  CharsIdentify::instance()->LoadChineseModel(path);
+}
+
+void CPlateRecognize::LoadGrayChANN(std::string path) {
+  CharsIdentify::instance()->LoadGrayChANN(path);
+}
+
+void CPlateRecognize::LoadChineseMapping(std::string path) {
+  CharsIdentify::instance()->LoadChineseMapping(path);
+}
+
+// deprected
+int CPlateRecognize::plateRecognize(const Mat& src, std::vector<std::string> &licenseVec) {
+  vector<CPlate> plates;
+  int resultPR = plateRecognize(src, plates, 0);
+
+  for (auto plate : plates) {
+    licenseVec.push_back(plate.getPlateStr());
+  }
+  return resultPR;
+}
+
+}

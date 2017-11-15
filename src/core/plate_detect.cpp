@@ -1,54 +1,77 @@
-#include "../include/plate_detect.h"
+#include "easypr/core/plate_detect.h"
+#include "easypr/util/util.h"
+#include "easypr/core/core_func.h"
+#include "easypr/config.h"
 
-/*! \namespace easypr
-    Namespace where all the C++ EasyPR functionality resides
-*/
-namespace easypr{
+namespace easypr {
 
-CPlateDetect::CPlateDetect()
-{
-	//cout << "CPlateDetect" << endl;
-	m_plateLocate = new CPlateLocate();
-	m_plateJudge = new CPlateJudge();
+  CPlateDetect::CPlateDetect() {
+    m_plateLocate = new CPlateLocate();
+    m_maxPlates = 3;
+    m_type = 0;
+    m_showDetect = false;
+  }
+
+  CPlateDetect::~CPlateDetect() { SAFE_RELEASE(m_plateLocate); }
+
+  int CPlateDetect::plateDetect(Mat src, std::vector<CPlate> &resultVec, int type,
+    bool showDetectArea, int img_index) {
+    std::vector<CPlate> sobel_Plates;
+    sobel_Plates.reserve(16);
+    std::vector<CPlate> color_Plates;
+    color_Plates.reserve(16);
+    std::vector<CPlate> mser_Plates;
+    mser_Plates.reserve(16);
+    std::vector<CPlate> all_result_Plates;
+    all_result_Plates.reserve(64);
+#pragma omp parallel sections
+    {
+#pragma omp section
+      {
+        if (!type || type & PR_DETECT_SOBEL) {
+          m_plateLocate->plateSobelLocate(src, sobel_Plates, img_index);
+        }
+      }
+#pragma omp section
+      {
+        if (!type || type & PR_DETECT_COLOR) {
+          m_plateLocate->plateColorLocate(src, color_Plates, img_index);
+        }
+      }
+#pragma omp section
+      {
+        if (!type || type & PR_DETECT_CMSER) {
+          m_plateLocate->plateMserLocate(src, mser_Plates, img_index);
+        }
+      }
+    }
+    for (auto plate : sobel_Plates) {
+      plate.setPlateLocateType(SOBEL);
+      all_result_Plates.push_back(plate);
+    }
+    for (auto plate : color_Plates) {
+      plate.setPlateLocateType(COLOR);
+      all_result_Plates.push_back(plate);
+    }
+    for (auto plate : mser_Plates) {
+      plate.setPlateLocateType(CMSER);
+      all_result_Plates.push_back(plate);
+    }
+    // use nms to judge plate
+    PlateJudge::instance()->plateJudgeUsingNMS(all_result_Plates, resultVec, m_maxPlates);
+
+    if (0)
+      showDectectResults(src, resultVec, m_maxPlates);
+    return 0;
+  }
+
+  int CPlateDetect::plateDetect(Mat src, std::vector<CPlate> &resultVec, int img_index) {
+    int result = plateDetect(src, resultVec, m_type, false, img_index);
+    return result;
+  }
+
+  void CPlateDetect::LoadSVM(std::string path) {
+    PlateJudge::instance()->LoadModel(path);
+  }
+
 }
-
-void CPlateDetect::LoadSVM(string s)
-{
-	m_plateJudge->LoadModel(s.c_str());
-}
-
-int CPlateDetect::plateDetect(Mat src, vector<Mat>& resultVec)
-{
-	//可能是车牌的图块集合
-	vector<Mat> matVec;
-
-	int resultLo = m_plateLocate->plateLocate(src, matVec);
-
-	if (0 != resultLo)
-		return -1;
-
-	int resultJu = m_plateJudge->plateJudge(matVec, resultVec);
-		
-	if(getPDDebug())
-	{ 
-		int size = resultVec.size();
-		for (int i = 0; i < size; i++)
-		{
-			Mat img = resultVec[i];
-			if(1)
-			{
-				stringstream ss(stringstream::in | stringstream::out);
-				ss << "image/tmp/plate_judge_result_" << i << ".jpg";
-				imwrite(ss.str(), img);
-			}
-		}
-	}	
-
-
-	if (0 != resultJu)
-		return -2;
-
-	return 0;
-}
-
-}	/*! \namespace easypr*/
